@@ -83,7 +83,7 @@ def get_args_parser():
     parser.add_argument('--coco_path', default=r'D:\dataset',type=str)
     parser.add_argument('--coco_panoptic_path', type=str)
     parser.add_argument('--remove_difficult', action='store_true')
-
+    #下面这一项是中途停止训练
     parser.add_argument('--output_dir', default='',
                         help='path where to save, empty for no saving')
     parser.add_argument('--device', default='cuda',
