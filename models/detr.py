@@ -40,7 +40,7 @@ class DETR(nn.Module):
         self.input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)
         self.backbone = backbone
         self.aux_loss = aux_loss
-
+        self.mask_shape=None
     def forward(self, samples: NestedTensor):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
@@ -61,6 +61,7 @@ class DETR(nn.Module):
         features, pos = self.backbone(samples)
 
         src, mask = features[-1].decompose()
+        self.mask_shape=(mask.shape[1],mask.shape[2])
         assert mask is not None
         hs = self.transformer(self.input_proj(src), mask, self.query_embed.weight, pos[-1])[0]
 

@@ -6,14 +6,17 @@ import math
 import os
 import sys
 from typing import Iterable
-
+from PIL import Image
 import torch
-
+import matplotlib.pyplot as plt
 import util.misc as utils
 from datasets.coco_eval import CocoEvaluator
 from datasets.panoptic_eval import PanopticEvaluator
-
-
+import torchvision.transforms as T
+import numpy as np
+from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
+                       accuracy, get_world_size, interpolate,
+                       is_dist_avail_and_initialized)
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, max_norm: float = 0):
@@ -85,11 +88,14 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
             output_dir=os.path.join(output_dir, "panoptic_eval"),
         )
 
+
+
     for samples, targets in metric_logger.log_every(data_loader, 10, header):
         samples = samples.to(device)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
         outputs = model(samples)
+        print('layers[-1].attention_weight', torch.sum(model.transformer.encoder.layers[-1].attention_weight,dim=2))
         loss_dict = criterion(outputs, targets)
         weight_dict = criterion.weight_dict
 
@@ -149,3 +155,101 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
         stats['PQ_th'] = panoptic_res["Things"]
         stats['PQ_st'] = panoptic_res["Stuff"]
     return stats, coco_evaluator
+
+
+
+
+# for output bounding box post-processing
+def box_cxcywh_to_xyxy(x):
+    x_c, y_c, w, h = x.unbind(1)
+    b = [(x_c - 0.5 * w), (y_c - 0.5 * h),
+         (x_c + 0.5 * w), (y_c + 0.5 * h)]
+    return torch.stack(b, dim=1)
+
+def rescale_bboxes(out_bbox, size):
+    img_w, img_h = size
+    b = box_cxcywh_to_xyxy(out_bbox)
+    b = b * torch.tensor([img_w, img_h, img_w, img_h], dtype=torch.float32)
+    return b
+@torch.no_grad()
+def evaluate_once(model, criterion, postprocessors, data_loader, base_ds, device, output_dir):
+    model.eval()
+    criterion.eval()
+
+    for samples, targets in data_loader:
+        samples = samples.to(device)
+        img,mask_img=samples.decompose()
+        #src, mask = samples[-1].decompose()
+        #print(src.shape)
+        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+
+        outputs = model(samples)
+        attn_weights=model.transformer.encoder.layers[-1].attention_weight
+        mask_shape=model.mask_shape
+        print('layers[-1].attention_weight', attn_weights[0,:,0])
+        print('mask_shape:',mask_shape)
+        print('image size:',img.shape)
+
+        break
+
+
+
+
+def add_yellow_effect(image_path, rect_dict, output_path):
+    # 加载图像并转换为RGB数组
+    img = Image.open(image_path).convert('RGB')
+    img_array = np.array(img)
+    h, w = img_array.shape[:2]
+
+    # 获取所有value的最大值用于归一化
+    max_value = max(rect_dict.values()) if rect_dict else 1
+
+    for (x_center, y_center, width, height), value in rect_dict.items():
+        # 计算矩形区域坐标
+        x1 = int(max(0, x_center - width // 2))
+        y1 = int(max(0, y_center - height // 2))
+        x2 = int(min(w, x_center + width // 2))
+        y2 = int(min(h, y_center + height // 2))
+
+        # 跳过无效区域
+        if x1 >= x2 or y1 >= y2:
+            continue
+
+        # 计算alpha值（黄色强度比例）
+        alpha = value / max_value
+
+        # 提取目标区域
+        region = img_array[y1:y2, x1:x2]
+
+        # 创建黄色遮罩
+        yellow_layer = np.full_like(region, [255, 255, 0])
+
+        # 混合颜色（使用线性插值）
+        blended = (region * (1 - alpha) + yellow_layer * alpha).astype(np.uint8)
+
+        # 更新图像数据
+        img_array[y1:y2, x1:x2] = blended
+
+    # 保存结果
+    Image.fromarray(img_array).save(output_path)
+
+
+    #add_yellow_effect('input.jpg', rectangles, 'output.jpg')
+
+
+
+def visualize_receptive_field(img_shape, mask_shape,feat_x, feat_y):
+    # 加载图像
+
+    h, w = img_shape
+    h_mask,w_mask=mask_shape
+    # 计算中心坐标和感受野
+    stride_total = 32
+    x_center = int((feat_x + 0.5) * stride_total)
+    y_center = int((feat_y + 0.5) * stride_total)
+
+    return (x_center,y_center)
+
+
+
+
